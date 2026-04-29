@@ -37,6 +37,7 @@ Usage - formats:
 from __future__ import annotations
 
 import platform
+import contextlib
 import re
 import threading
 from pathlib import Path
@@ -45,6 +46,7 @@ from typing import Any, Callable
 import cv2
 import numpy as np
 import torch
+import torch.nn.functional as F
 
 from ultralytics.cfg import get_cfg, get_save_dir
 from ultralytics.data import load_inference_source
@@ -53,7 +55,7 @@ from ultralytics.nn.autobackend import AutoBackend
 from ultralytics.utils import DEFAULT_CFG, LOGGER, MACOS, WINDOWS, callbacks, colorstr, ops
 from ultralytics.utils.checks import check_imgsz, check_imshow
 from ultralytics.utils.files import increment_path
-from ultralytics.utils.torch_utils import attempt_compile, select_device, smart_inference_mode
+from ultralytics.utils.torch_utils import attempt_compile, select_device, smart_inference_mode, unwrap_model
 
 STREAM_WARNING = """
 Inference results will accumulate in RAM unless `stream=True` is passed, which can cause out-of-memory errors for large
@@ -147,6 +149,7 @@ class BasePredictor:
         self.callbacks = _callbacks or callbacks.get_default_callbacks()
         self.txt_path = None
         self._lock = threading.Lock()  # for automatic thread-safe inference
+        self._heatmap_cams = None  # per-batch Grad-CAM heatmaps (B,H,W) for overlay
         callbacks.add_integration_callbacks(self)
 
     def preprocess(self, im: torch.Tensor | list[np.ndarray]) -> torch.Tensor:
@@ -180,7 +183,65 @@ class BasePredictor:
             if self.args.visualize and (not self.source_type.tensor)
             else False
         )
+        if self.args.heatmap and not self.args.embed:
+            return self._inference_with_heatmap(im, visualize=visualize, *args, **kwargs)
+        self._heatmap_cams = None
         return self.model(im, augment=self.args.augment, visualize=visualize, embed=self.args.embed, *args, **kwargs)
+
+    def _inference_with_heatmap(self, im: torch.Tensor, visualize: bool = False, *args, **kwargs):
+        """Run inference and compute a robust feature-attention heatmap for the current batch."""
+        self._heatmap_cams = None
+
+        # Heatmap extraction here requires a native PyTorch model.
+        if getattr(self.model, "format", None) != "pt":
+            LOGGER.warning("Heatmap mode currently supports only native PyTorch (*.pt) models.")
+            return self.model(im, augment=self.args.augment, visualize=visualize, embed=self.args.embed, *args, **kwargs)
+
+        unwrapped = unwrap_model(self.model.model)
+        detect_layer = unwrapped.model[-1] if hasattr(unwrapped, "model") and len(getattr(unwrapped, "model", [])) else None
+        if detect_layer is None:
+            LOGGER.warning("Heatmap mode disabled: couldn't locate model detect head.")
+            return self.model(im, augment=self.args.augment, visualize=visualize, embed=self.args.embed, *args, **kwargs)
+
+        fpn_feats = None
+
+        def pre_hook(_, layer_input):
+            # Detect head input is the feature pyramid list [P3, P4, P5].
+            nonlocal fpn_feats
+            if layer_input and isinstance(layer_input[0], (list, tuple)):
+                fpn_feats = layer_input[0]
+
+        handle = detect_layer.register_forward_pre_hook(pre_hook)
+        try:
+            preds = self.model(im, augment=self.args.augment, visualize=visualize, embed=self.args.embed, *args, **kwargs)
+        finally:
+            handle.remove()
+
+        if not isinstance(fpn_feats, (list, tuple)) or not fpn_feats:
+            LOGGER.warning("Heatmap mode disabled: detect-head feature maps were not captured.")
+            return preds
+
+        bs = int(fpn_feats[0].shape[0])
+        img_h, img_w = im.shape[2:]
+        cams = []
+
+        # Build an attention map from multi-scale detect features (stable and fast).
+        for bi in range(bs):
+            cam_acc = torch.zeros((img_h, img_w), device=im.device, dtype=torch.float32)
+            valid = 0
+            for feat in fpn_feats:
+                if not isinstance(feat, torch.Tensor) or feat.ndim != 4:
+                    continue
+                fmap = feat[bi].float().abs().mean(0)  # CxHxW -> HxW attention intensity
+                fmap = fmap - fmap.min()
+                fmap = fmap / (fmap.max() + 1e-8)
+                fmap = F.interpolate(fmap[None, None], size=(img_h, img_w), mode="bilinear", align_corners=False)[0, 0]
+                cam_acc += fmap
+                valid += 1
+            cams.append((cam_acc / max(valid, 1)).detach())
+
+        self._heatmap_cams = torch.stack(cams).cpu()  # (B, H, W)
+        return preds
 
     def pre_transform(self, im: list[np.ndarray]) -> list[np.ndarray]:
         """Pre-transform input image before inference.
@@ -274,7 +335,6 @@ class BasePredictor:
                 LOGGER.warning(STREAM_WARNING)
         self.vid_writer = {}
 
-    @smart_inference_mode()
     def stream_inference(self, source=None, model=None, *args, **kwargs):
         """Stream inference on input source and save results to file.
 
@@ -340,6 +400,13 @@ class BasePredictor:
                 # Postprocess
                 with profilers[2]:
                     self.results = self.postprocess(preds, im, im0s)
+
+                # Attach per-image heatmaps to Results for later blending in write_results().
+                if self.args.heatmap and self._heatmap_cams is not None:
+                    for ri, r in enumerate(self.results or []):
+                        if ri < len(self._heatmap_cams):
+                            r.heatmap = self._heatmap_cams[ri]
+                    self._heatmap_cams = None
                 self.run_callbacks("on_predict_postprocess_end")
 
                 # Visualize, save, write results
@@ -414,6 +481,45 @@ class BasePredictor:
         self.model.eval()
         self.model = attempt_compile(self.model, device=self.device, mode=self.args.compile)
 
+    def _blend_heatmap(self, plot_img: np.ndarray, cam: torch.Tensor | np.ndarray, im: torch.Tensor, orig_img: np.ndarray):
+        """Blend a Grad-CAM heatmap onto `plot_img` (BGR uint8)."""
+        if cam is None:
+            return plot_img
+        if isinstance(cam, torch.Tensor):
+            cam = cam.detach().cpu().numpy()
+        if not isinstance(cam, np.ndarray) or cam.ndim != 2:
+            return plot_img
+
+        img_h, img_w = im.shape[-2:]
+        orig_h, orig_w = orig_img.shape[:2]
+        if img_h <= 0 or img_w <= 0 or orig_h <= 0 or orig_w <= 0:
+            return plot_img
+
+        # Undo letterbox (same math as `scale_boxes`) and resize CAM to original resolution.
+        gain = min(img_h / orig_h, img_w / orig_w)
+        new_w, new_h = round(orig_w * gain), round(orig_h * gain)
+        pad_x, pad_y = round((img_w - new_w) / 2 - 0.1), round((img_h - new_h) / 2 - 0.1)
+        cam_crop = cam[pad_y : pad_y + new_h, pad_x : pad_x + new_w]
+        if cam_crop.size == 0:
+            return plot_img
+
+        cam_resized = cv2.resize(cam_crop, (orig_w, orig_h), interpolation=cv2.INTER_LINEAR)
+        # Robust normalization to reduce "all blue tint" behavior on low-contrast CAMs.
+        lo, hi = np.percentile(cam_resized, 5), np.percentile(cam_resized, 99)
+        denom = hi - lo
+        if denom <= 1e-8:
+            return plot_img
+        cam_resized = np.clip((cam_resized - lo) / (denom + 1e-8), 0.0, 1.0)
+        if cam_resized.max() <= 0.02:
+            return plot_img
+
+        heatmap_u8 = (cam_resized * 255.0).clip(0, 255).astype(np.uint8)
+        heatmap_colored = cv2.applyColorMap(heatmap_u8, cv2.COLORMAP_TURBO)
+
+        alpha = float(getattr(self.args, "hmo", 0.5))
+        alpha = max(0.0, min(1.0, alpha))
+        return cv2.addWeighted(plot_img, 1.0 - alpha, heatmap_colored, alpha, 0)
+
     def write_results(self, i: int, p: Path, im: torch.Tensor, s: list[str]) -> str:
         """Write inference results to a file or directory.
 
@@ -451,6 +557,10 @@ class BasePredictor:
                 labels=self.args.show_labels,
                 im_gpu=None if self.args.retina_masks else im[i],
             )
+
+            # Overlay attention heatmap on top of normal detections.
+            if self.args.heatmap and hasattr(result, "heatmap"):
+                self.plotted_img = self._blend_heatmap(self.plotted_img, result.heatmap, im[i], result.orig_img)
 
         # Save results
         if self.args.save_txt:

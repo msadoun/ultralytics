@@ -521,6 +521,12 @@ class Model(torch.nn.Module):
             x in ARGV for x in ("predict", "track", "mode=predict", "mode=track")
         )
 
+        # Backwards-compatible aliases for custom heatmap/attention arguments
+        if "HeatMap" in kwargs and "heatmap" not in kwargs:
+            kwargs["heatmap"] = kwargs.pop("HeatMap")
+        if "HMO" in kwargs and "hmo" not in kwargs:
+            kwargs["hmo"] = kwargs.pop("HMO")
+
         custom = {"conf": 0.25, "batch": 1, "save": is_cli, "mode": "predict", "rect": True}  # method defaults
         args = {**self.overrides, **custom, **kwargs}  # highest priority args on the right
         prompts = args.pop("prompts", None)  # for SAM-type models

@@ -205,6 +205,7 @@ CFG_FRACTION_KEYS = frozenset(
         "copy_paste",
         "conf",
         "iou",
+        "hmo",
         "fraction",
         "multi_scale",
     }
@@ -248,6 +249,7 @@ CFG_BOOL_KEYS = frozenset(
         "show_conf",
         "visualize",
         "augment",
+        "heatmap",
         "agnostic_nms",
         "retina_masks",
         "show_boxes",
