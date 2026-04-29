@@ -167,9 +167,9 @@ Outputs are saved separately so you can compare:
 - `runs/detect/baseline/bus.jpg`
 - `runs/detect/heatmap/bus.jpg`
 
-### Compatibility test (detect task)
+### Compatibility test (available pretrained checkpoints)
 
-A detect-only compatibility script is included at `test_heatmap_all_models.py`.
+A compatibility script is included at `test_heatmap_all_models.py`.
 
 Run:
 
@@ -185,7 +185,11 @@ Default matrix:
 - YOLO12: `n, s, m, l, x`
 - YOLO26: `n, s, m, l, x`
 
-Latest local run result (detect-only): **25/25 passed**.
+Default tasks: `detect`, `segment`, `pose`, `obb` (classification excluded).
+
+The script automatically skips unavailable pretrained combinations (for example YOLO12 non-detect and unsupported YOLOv9 task variants), and tests only valid checkpoint names.
+
+Latest local run result: **71/71 passed**.
 
 ## ✨ Models
 

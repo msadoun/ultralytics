@@ -27,12 +27,58 @@ def make_model_names(versions: list[str], sizes: list[str], task_suffixes: list[
         "12": ["n", "s", "m", "l", "x"],
         "26": ["n", "s", "m", "l", "x"],
     }
+    # Known pretrained checkpoint availability by version and task suffix.
+    # This avoids generating model names that do not exist upstream.
+    available_sizes_by_version_suffix = {
+        "8": {
+            "": ["n", "s", "m", "l", "x"],
+            "-seg": ["n", "s", "m", "l", "x"],
+            "-pose": ["n", "s", "m", "l", "x"],
+            "-obb": ["n", "s", "m", "l", "x"],
+            "-cls": ["n", "s", "m", "l", "x"],
+        },
+        "9": {
+            "": ["t", "s", "m", "c", "e"],
+            "-seg": ["c"],
+            "-pose": [],
+            "-obb": [],
+            "-cls": [],
+        },
+        "11": {
+            "": ["n", "s", "m", "l", "x"],
+            "-seg": ["n", "s", "m", "l", "x"],
+            "-pose": ["n", "s", "m", "l", "x"],
+            "-obb": ["n", "s", "m", "l", "x"],
+            "-cls": ["n", "s", "m", "l", "x"],
+        },
+        "12": {
+            "": ["n", "s", "m", "l", "x"],
+            "-seg": [],
+            "-pose": [],
+            "-obb": [],
+            "-cls": [],
+        },
+        "26": {
+            "": ["n", "s", "m", "l", "x"],
+            "-seg": ["n", "s", "m", "l", "x"],
+            "-pose": ["n", "s", "m", "l", "x"],
+            "-obb": ["n", "s", "m", "l", "x"],
+            "-cls": [],
+        },
+    }
     names = []
     for version in versions:
         stem = stems[version]
         selected_sizes = default_sizes_by_version[version] if sizes == ["auto"] else sizes
-        for size in selected_sizes:
-            for suffix in task_suffixes:
+        for suffix in task_suffixes:
+            available_sizes = available_sizes_by_version_suffix.get(version, {}).get(suffix, [])
+            if not available_sizes:
+                continue
+            if sizes == ["auto"]:
+                sizes_for_suffix = available_sizes
+            else:
+                sizes_for_suffix = [size for size in selected_sizes if size in available_sizes]
+            for size in sizes_for_suffix:
                 names.append(f"{stem}{size}{suffix}.pt")
     return names
 
@@ -109,7 +155,7 @@ def main() -> None:
     parser.add_argument(
         "--tasks",
         nargs="+",
-        default=["detect"],
+        default=["detect", "segment", "pose", "obb"],
         choices=["detect", "segment", "pose", "obb", "classify"],
         help="Task variants to test",
     )
