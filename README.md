@@ -167,6 +167,26 @@ Outputs are saved separately so you can compare:
 - `runs/detect/baseline/bus.jpg`
 - `runs/detect/heatmap/bus.jpg`
 
+### Compatibility test (detect task)
+
+A detect-only compatibility script is included at `test_heatmap_all_models.py`.
+
+Run:
+
+```bash
+python test_heatmap_all_models.py
+```
+
+Default matrix:
+
+- YOLOv8: `n, s, m, l, x`
+- YOLOv9: `t, s, m, c, e`
+- YOLO11: `n, s, m, l, x`
+- YOLO12: `n, s, m, l, x`
+- YOLO26: `n, s, m, l, x`
+
+Latest local run result (detect-only): **25/25 passed**.
+
 ## ✨ Models
 
 Ultralytics supports a wide range of YOLO models, from early versions like [YOLOv3](https://docs.ultralytics.com/models/yolov3/) to the latest [YOLO26](https://docs.ultralytics.com/models/yolo26/). The tables below showcase YOLO26 models pretrained on the [COCO](https://docs.ultralytics.com/datasets/detect/coco/) dataset for [Detection](https://docs.ultralytics.com/tasks/detect/), [Segmentation](https://docs.ultralytics.com/tasks/segment/), and [Pose Estimation](https://docs.ultralytics.com/tasks/pose/). Additionally, [Classification](https://docs.ultralytics.com/tasks/classify/) models pretrained on the [ImageNet](https://docs.ultralytics.com/datasets/classify/imagenet/) dataset are available. [Tracking](https://docs.ultralytics.com/modes/track/) mode is compatible with all Detection, Segmentation, and Pose models. All [Models](https://docs.ultralytics.com/models/) are automatically downloaded from the latest Ultralytics [release](https://github.com/ultralytics/assets/releases) upon first use.
