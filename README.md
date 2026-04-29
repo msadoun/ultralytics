@@ -115,6 +115,58 @@ Discover more examples in the YOLO [Python Docs](https://docs.ultralytics.com/us
 
 </details>
 
+## 🔥 Custom Heatmap Predict Mode (This Fork)
+
+This repository includes a custom predict option to overlay a detection attention heatmap on output images/videos.
+
+> Note: this functionality is specific to this fork/source tree. It is not available from the default PyPI package unless you install this modified repo.
+
+### Installation (Conda + local source)
+
+```bash
+conda create -n yolo-heatmap python=3.11 -y
+conda activate yolo-heatmap
+cd /path/to/this/repo
+pip install -e .
+```
+
+### Python usage
+
+```python
+from ultralytics import YOLO
+
+model = YOLO("yolo11n.pt")
+
+# 1) Baseline detection output
+model.predict(
+    "https://ultralytics.com/images/bus.jpg",
+    save=True,
+    imgsz=320,
+    conf=0.25,
+    project="runs/detect",
+    name="baseline",
+    exist_ok=True,
+)
+
+# 2) Detection + heatmap overlay output
+model.predict(
+    "https://ultralytics.com/images/bus.jpg",
+    save=True,
+    imgsz=320,
+    conf=0.25,
+    HeatMap=True,   # custom alias (also supports: heatmap=True)
+    HMO=0.8,        # opacity in [0.0, 1.0] (also supports: hmo=0.8)
+    project="runs/detect",
+    name="heatmap",
+    exist_ok=True,
+)
+```
+
+Outputs are saved separately so you can compare:
+
+- `runs/detect/baseline/bus.jpg`
+- `runs/detect/heatmap/bus.jpg`
+
 ## ✨ Models
 
 Ultralytics supports a wide range of YOLO models, from early versions like [YOLOv3](https://docs.ultralytics.com/models/yolov3/) to the latest [YOLO26](https://docs.ultralytics.com/models/yolo26/). The tables below showcase YOLO26 models pretrained on the [COCO](https://docs.ultralytics.com/datasets/detect/coco/) dataset for [Detection](https://docs.ultralytics.com/tasks/detect/), [Segmentation](https://docs.ultralytics.com/tasks/segment/), and [Pose Estimation](https://docs.ultralytics.com/tasks/pose/). Additionally, [Classification](https://docs.ultralytics.com/tasks/classify/) models pretrained on the [ImageNet](https://docs.ultralytics.com/datasets/classify/imagenet/) dataset are available. [Tracking](https://docs.ultralytics.com/modes/track/) mode is compatible with all Detection, Segmentation, and Pose models. All [Models](https://docs.ultralytics.com/models/) are automatically downloaded from the latest Ultralytics [release](https://github.com/ultralytics/assets/releases) upon first use.
